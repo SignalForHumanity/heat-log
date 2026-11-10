@@ -1,0 +1,17 @@
+[package]
+name = "heat-log"
+version = "0.1.0"
+edition = "2021"
+description = "Turns a home thermometer's CSV export into a NYC heat-law violation log"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/SignalForHumanity/heat-log"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = "=0.2.130"
+
+[profile.release]
+opt-level = "s"
+lto = true

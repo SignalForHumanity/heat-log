@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NYC Heat Log Check</title>
+<style>
+  :root { --fg: #1a1a1a; --bg: #fff; --muted: #555; --line: #ccc; --bad: #a40000; --accent: #0b5cad; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg: #eee; --bg: #161616; --muted: #aaa; --line: #444; --bad: #ff8a80; --accent: #7cb7ff; }
+  }
+  body { font: 17px/1.5 system-ui, sans-serif; color: var(--fg); background: var(--bg); max-width: 46rem; margin: 0 auto; padding: 1rem; }
+  h1 { font-size: 1.6rem; margin-bottom: .2rem; }
+  h2 { font-size: 1.2rem; margin-top: 1.6rem; }
+  fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 1rem 0; padding: .6rem 1rem 1rem; }
+  legend { font-weight: 600; padding: 0 .3rem; }
+  label { display: block; margin: .5rem 0 .2rem; }
+  input[type=file] { max-width: 100%; }
+  button { font: inherit; padding: .5rem 1rem; margin: .5rem .5rem 0 0; border: 1px solid var(--accent); border-radius: 6px; background: var(--accent); color: var(--bg); cursor: pointer; }
+  button.plain { background: none; color: var(--accent); }
+  button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .muted, .note { color: var(--muted); font-size: .95rem; }
+  .error { color: var(--bad); font-weight: 600; }
+  table { border-collapse: collapse; width: 100%; margin: .5rem 0; }
+  th, td { border: 1px solid var(--line); padding: .3rem .5rem; text-align: left; vertical-align: top; }
+  .summary th { width: 60%; font-weight: 500; }
+  .table-wrap { overflow-x: auto; }
+  @media print {
+    form, .actions, footer, .intro { display: none; }
+    body { max-width: none; font-size: 12pt; color: #000; background: #fff; }
+  }
+</style>
+</head>
+<body>
+<header class="intro">
+  <h1>NYC heat log check</h1>
+  <p>Have a thermometer that records the temperature and exports a CSV file (SensorPush, Govee, ThermoPro, Inkbird and others do)? This page checks every hour of it against New York City's heat law and makes a log you can print for 311, HPD, a lawyer, or Housing Court.</p>
+  <p><strong>Your file never leaves this device.</strong> It is read and checked here, in your browser.</p>
+  <details>
+    <summary>What the law requires (October 1 to May 31)</summary>
+    <ul>
+      <li><strong>6am to 10pm:</strong> at least 68°F inside whenever it is below 55°F outside.</li>
+      <li><strong>10pm to 6am:</strong> at least 62°F inside, whatever the weather.</li>
+    </ul>
+    <p class="muted">NYC Housing Maintenance Code §27-2029. Hot water (120°F at the tap, all year) is not covered here.</p>
+  </details>
+</header>
+
+<form id="form">
+  <fieldset>
+    <legend>1. Your thermometer's file</legend>
+    <label for="indoor">Indoor temperature log (CSV)</label>
+    <input id="indoor" type="file" accept=".csv,.txt,text/csv" required>
+    <p class="muted">Put the thermometer in the coldest room you use, away from windows, radiators and the floor.</p>
+  </fieldset>
+
+  <fieldset>
+    <legend>Optional: for the printed log</legend>
+    <label for="who">Your name, address and apartment</label>
+    <input id="who" type="text" autocomplete="street-address" style="width:100%;font:inherit">
+    <p class="muted">Only printed on this page; not saved or sent anywhere.</p>
+  </fieldset>
+
+  <fieldset>
+    <legend>2. Outdoor temperature (for the daytime rule)</legend>
+    <label><input id="fetch" type="checkbox"> Get hourly Central Park temperatures from Open-Meteo</label>
+    <p class="muted">This sends only the first and last date of your log to open-meteo.com. These are modelled temperatures, not an official weather-station record; for court, ask for NOAA's certified Central Park data.</p>
+    <label for="outdoor">Or use your own outdoor log (CSV, with °F or °C in the temperature column's name)</label>
+    <input id="outdoor" type="file" accept=".csv,.txt,text/csv">
+    <p class="muted">Without either, night hours are still checked; daytime hours below 68°F are marked "possible".</p>
+  </fieldset>
+
+  <button type="submit">Check my log</button>
+  <p id="status" role="status" aria-live="polite"></p>
+</form>
+
+<main id="result" hidden>
+  <div class="actions">
+    <button type="button" id="print">Print</button>
+    <button type="button" class="plain" id="download">Download every hour (CSV)</button>
+  </div>
+  <h1>Heat log</h1>
+  <p id="pwho"></p>
+  <div id="report" class="table-wrap"></div>
+  <p class="note">Each hour uses the average of that hour's readings. Thermometers are usually accurate to about ±1°F, so keep yours where it can't be disputed, and keep the original file.</p>
+</main>
+
+<footer>
+  <h2>Getting help</h2>
+  <ul>
+    <li>Report no heat to <a href="https://portal.311.nyc.gov/article/?kanumber=KA-01036">311</a>; ask for the complaint number.</li>
+    <li>Met Council on Housing's <a href="https://www.metcouncilonhousing.org/">tenants' rights hotline</a> and its paper heat log.</li>
+    <li>Free legal help: <a href="https://www.nyc.gov/site/hra/help/legal-services-for-tenants.page">NYC tenant legal services</a>.</li>
+  </ul>
+  <p class="muted">This page is not legal advice. Open source: <a href="https://github.com/SignalForHumanity/heat-log">github.com/SignalForHumanity/heat-log</a>.</p>
+</footer>
+
+<script type="module">
+  import init, { check_csv, date_range } from "./pkg/heat_log.js";
+  const $ = (id) => document.getElementById(id);
+  const ready = init();
+  let csv = "";
+
+  async function outdoorFromOpenMeteo(indoorText) {
+    const [start, end] = date_range(indoorText).split(" ");
+    const q = new URLSearchParams({
+      latitude: "40.7789", longitude: "-73.9692", hourly: "temperature_2m",
+      temperature_unit: "fahrenheit", timezone: "America/New_York", start_date: start, end_date: end,
+    });
+    const r = await fetch("https://archive-api.open-meteo.com/v1/archive?" + q);
+    if (!r.ok) throw new Error("Open-Meteo did not answer (" + r.status + "). Try again later, or use your own outdoor file.");
+    const { hourly } = await r.json();
+    return "time,temperature (F)\n" + hourly.time
+      .map((t, i) => [t, hourly.temperature_2m[i]])
+      .filter(([, v]) => v !== null)
+      .map(([t, v]) => t + "," + v).join("\n");
+  }
+
+  $("form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const status = $("status");
+    status.className = "";
+    status.textContent = "Checking…";
+    try {
+      await ready;
+      const indoor = await $("indoor").files[0].text();
+      let outdoor = "";
+      if ($("outdoor").files[0]) outdoor = await $("outdoor").files[0].text();
+      else if ($("fetch").checked) outdoor = await outdoorFromOpenMeteo(indoor);
+      const checked = check_csv(indoor, outdoor);
+      $("pwho").textContent = $("who").value;
+      $("report").innerHTML = checked.html; // built in Rust from numbers; file text is escaped
+      csv = checked.csv;
+      $("result").hidden = false;
+      status.textContent = "Done. Results are below.";
+      $("result").scrollIntoView({ behavior: "smooth" });
+    } catch (err) {
+      status.className = "error";
+      status.textContent = String(err.message ?? err);
+    }
+  });
+
+  $("print").addEventListener("click", () => window.print());
+  $("download").addEventListener("click", () => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    a.download = "heat-log-hourly.csv";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+</script>
+</body>
+</html>
